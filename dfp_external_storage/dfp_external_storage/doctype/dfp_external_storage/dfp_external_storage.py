@@ -10,6 +10,7 @@ from werkzeug.wsgi import wrap_file
 from functools import cached_property
 import urllib3
 from minio import Minio
+import urllib3
 import frappe
 from frappe import _
 from frappe.core.doctype.file.file import File
@@ -163,13 +164,13 @@ class DFPExternalStorage(Document):
 		return self.client.list_objects(self.bucket_name, recursive=True)
 
 
-# Bounded S3 client timeouts (Floreer-Africa/framework#126). minio's default
-# urllib3 pool waits 300s (connect+read) with 5 retries, so a stalled S3 endpoint
-# pins a gunicorn worker far past its request timeout; a burst of cold-cache image
-# fetches during a Contabo slowdown exhausted the pool and took floreer.africa down
-# (orders blocked, 2026-07-17). These short, fail-fast values free the worker instead.
-# The read timeout is urllib3's inter-byte timeout, not a total-transfer cap, so
-# large objects still stream fine — it only fires on a genuine stall.
+# Bounded S3 client timeouts (framework#95, origin Floreer-Africa/framework#126). minio's
+# default urllib3 pool waits 300s (connect+read) with 5 retries, so a stalled S3 endpoint
+# pins a gunicorn worker far past its request timeout; a burst of cold-cache image fetches
+# during an endpoint slowdown exhausted the pool and took a production site down (orders
+# blocked). These short, fail-fast values free the worker instead. The read timeout is
+# urllib3's inter-byte timeout, not a total-transfer cap, so large objects still stream
+# fine — it only fires on a genuine stall.
 DFP_S3_CONNECT_TIMEOUT = 5
 DFP_S3_READ_TIMEOUT = 10
 DFP_S3_RETRIES = 1
@@ -177,11 +178,11 @@ DFP_S3_RETRIES = 1
 
 def dfp_bounded_http_client() -> urllib3.PoolManager:
 	"""urllib3 pool with bounded timeouts so a stalled S3 endpoint can never pin a
-	web worker (Floreer-Africa/framework#126). Mirrors minio's own PoolManager
-	defaults (TLS verification, pool size) but replaces the 300s timeout / 5 retries
-	with short, fail-fast values. Guarded by
-	``floreer_app.tests.test_dfp_s3_client_timeout``; re-verify after every dfp
-	upstream-sync (upstream owns ``MinioConnection.__init__``)."""
+	web worker (framework#95, origin Floreer-Africa/framework#126). Mirrors minio's own
+	PoolManager defaults (TLS verification, pool size) but replaces the 300s timeout / 5
+	retries with short, fail-fast values. Guarded by the timeout regression test in this
+	repo's suite; re-verify after every upstream-sync (upstream owns
+	``MinioConnection.__init__``)."""
 	import certifi
 
 	return urllib3.PoolManager(
