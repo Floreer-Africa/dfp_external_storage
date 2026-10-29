@@ -844,8 +844,20 @@ def hook_file_before_save(doc, method):
 
 	# Clean cache when updating "File"
 	if doc.dfp_external_storage_s3_key:
-		cache_key = f"{DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX}{doc.name}"
-		frappe.cache().delete_value(cache_key)
+		dfp_forget_cached_file(doc.name)
+
+
+def dfp_forget_cached_file(name:str):
+	"""Drop dfp's cached copy of File `name`, now and again once the transaction commits.
+
+	The cache holds a public file's whole response and is served with no permission check, so
+	it must go when the file is made private or deleted (PR-Foundry/framework#332 review).
+	Clearing only now leaves a gap: a request between this and the commit still reads the old
+	row and re-caches the old public copy. The second clear, after the commit, closes it.
+	"""
+	cache_key = f"{DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX}{name}"
+	frappe.cache().delete_value(cache_key)
+	frappe.db.after_commit.add(lambda: frappe.cache().delete_value(cache_key))
 
 
 def hook_file_on_update(doc, method):
@@ -857,6 +869,9 @@ def hook_file_after_delete(doc, method):
 	"Called after a document is deleted"
 	if not hasattr(doc, "dfp_external_storage_delete_file"):
 		return
+	# A deleted public file must not stay servable from the cache (framework#332 review).
+	if doc.get("dfp_external_storage_s3_key"):
+		dfp_forget_cached_file(doc.name)
 	doc.dfp_external_storage_delete_file()
 
 
@@ -875,6 +890,9 @@ def dfp_file_name_matches_request(stored_file_name:str, requested:str) -> bool:
 	return stored_file_name == f"{requested}{DFP_FRAPPE_ROUTER_STRIPPED_SUFFIX}"
 
 
+DFP_PUBLIC_EDGE_MAX_AGE = 60 * 60
+
+
 def dfp_public_cache_control(max_age:int) -> str:
 	"""The Cache-Control a PUBLIC file is served with (Floreer-Africa/framework#283, PR-Foundry/framework#332).
 
@@ -884,8 +902,13 @@ def dfp_public_cache_control(max_age:int) -> str:
 	and every page view re-fetched every image through the backend workers. A
 	private file must never get it: it is permission-checked per request, and a
 	shared cache would hand it to the next caller.
+
+	The max-age is capped at DFP_PUBLIC_EDGE_MAX_AGE: making a file private or
+	deleting it clears only dfp's Redis copy, so whatever a CDN or browser holds is
+	served until it expires. A day-long edge cache would keep a mistakenly public
+	upload reachable for a day after it was withdrawn.
 	"""
-	return f"public, max-age={int(max_age)}"
+	return f"public, max-age={min(int(max_age), DFP_PUBLIC_EDGE_MAX_AGE)}"
 
 
 def dfp_force_download_header(file_name:str):
