@@ -876,6 +876,9 @@ def dfp_file_name_matches_request(stored_file_name:str, requested:str) -> bool:
 	return stored_file_name == f"{requested}{DFP_FRAPPE_ROUTER_STRIPPED_SUFFIX}"
 
 
+DFP_PUBLIC_EDGE_MAX_AGE = 60 * 60
+
+
 def dfp_public_cache_control(max_age:int) -> str:
 	"""The Cache-Control a PUBLIC file is served with (Floreer-Africa/framework#283, PR-Foundry/framework#332).
 
@@ -885,8 +888,13 @@ def dfp_public_cache_control(max_age:int) -> str:
 	and every page view re-fetched every image through the backend workers. A
 	private file must never get it: it is permission-checked per request, and a
 	shared cache would hand it to the next caller.
+
+	The max-age is capped at DFP_PUBLIC_EDGE_MAX_AGE: making a file private or
+	deleting it clears only dfp's Redis copy, so whatever a CDN or browser holds is
+	served until it expires. A day-long edge cache would keep a mistakenly public
+	upload reachable for a day after it was withdrawn.
 	"""
-	return f"public, max-age={int(max_age)}"
+	return f"public, max-age={min(int(max_age), DFP_PUBLIC_EDGE_MAX_AGE)}"
 
 
 def dfp_force_download_header(file_name:str):
