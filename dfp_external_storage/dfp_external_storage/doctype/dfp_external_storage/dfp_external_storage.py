@@ -877,7 +877,7 @@ def dfp_file_name_matches_request(stored_file_name:str, requested:str) -> bool:
 
 
 def dfp_public_cache_control(max_age:int) -> str:
-	"""The Cache-Control a PUBLIC file is served with (framework#283).
+	"""The Cache-Control a PUBLIC file is served with (Floreer-Africa/framework#283, PR-Foundry/framework#332).
 
 	frappe's `process_response` stamps every response `no-store` and flushes the
 	session cookies onto it unless the endpoint opts in with a "public"
@@ -951,7 +951,7 @@ def file(name:str, file:str):
 	cache_hit = bool(response_values)
 	if cache_hit and not any(h[0] == "Cache-Control" for h in response_values.get("headers", [])):
 		# Only public files are ever cached here; an entry written before
-		# framework#283 lacks the header until it expires.
+		# Floreer-Africa/framework#283 lacks the header until it expires.
 		response_values["headers"].append(("Cache-Control", dfp_public_cache_control(60 * 60 * 24)))
 	if not response_values:
 		try:
