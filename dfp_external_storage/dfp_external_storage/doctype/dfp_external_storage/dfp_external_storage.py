@@ -876,6 +876,19 @@ def dfp_file_name_matches_request(stored_file_name:str, requested:str) -> bool:
 	return stored_file_name == f"{requested}{DFP_FRAPPE_ROUTER_STRIPPED_SUFFIX}"
 
 
+def dfp_public_cache_control(max_age:int) -> str:
+	"""The Cache-Control a PUBLIC file is served with (framework#283).
+
+	frappe's `process_response` stamps every response `no-store` and flushes the
+	session cookies onto it unless the endpoint opts in with a "public"
+	Cache-Control, so without this no browser or CDN could cache a product image
+	and every page view re-fetched every image through the backend workers. A
+	private file must never get it: it is permission-checked per request, and a
+	shared cache would hand it to the next caller.
+	"""
+	return f"public, max-age={int(max_age)}"
+
+
 def dfp_force_download_header(file_name:str):
 	"""Frappe's own force-download header for `file_name`, or None.
 
@@ -935,6 +948,11 @@ def file(name:str, file:str):
 	cache_key = f"{DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX}{name}"
 
 	response_values = frappe.cache().get_value(cache_key)
+	cache_hit = bool(response_values)
+	if cache_hit and not any(h[0] == "Cache-Control" for h in response_values.get("headers", [])):
+		# Only public files are ever cached here; an entry written before
+		# framework#283 lacks the header until it expires.
+		response_values["headers"].append(("Cache-Control", dfp_public_cache_control(60 * 60 * 24)))
 	if not response_values:
 		try:
 			doc = frappe.get_doc("File", name)
@@ -975,6 +993,9 @@ def file(name:str, file:str):
 		download_header = dfp_force_download_header(doc.file_name)
 		if download_header:
 			response_values["headers"].append(download_header)
+		if not doc.is_private:
+			response_values["headers"].append(("Cache-Control", dfp_public_cache_control(
+				doc.dfp_external_storage_doc.setting_cache_expiration_secs)))
 		response_values["status"] = 200
 
 		if doc.dfp_is_cacheable():
