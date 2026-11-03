@@ -868,8 +868,20 @@ def hook_file_before_save(doc, method):
 
 	# Clean cache when updating "File"
 	if doc.dfp_external_storage_s3_key:
-		cache_key = f"{DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX}{doc.name}"
-		frappe.cache().delete_value(cache_key)
+		dfp_forget_cached_file(doc.name)
+
+
+def dfp_forget_cached_file(name:str):
+	"""Drop dfp's cached copy of File `name`, now and again once the transaction commits.
+
+	The cache holds a public file's whole response and is served with no permission check, so
+	it must go when the file is made private or deleted (PR-Foundry/framework#332 review).
+	Clearing only now leaves a gap: a request between this and the commit still reads the old
+	row and re-caches the old public copy. The second clear, after the commit, closes it.
+	"""
+	cache_key = f"{DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX}{name}"
+	frappe.cache().delete_value(cache_key)
+	frappe.db.after_commit.add(lambda: frappe.cache().delete_value(cache_key))
 
 
 def hook_file_on_update(doc, method):
@@ -881,6 +893,9 @@ def hook_file_after_delete(doc, method):
 	"Called after a document is deleted"
 	if not hasattr(doc, "dfp_external_storage_delete_file"):
 		return
+	# A deleted public file must not stay servable from the cache (framework#332 review).
+	if doc.get("dfp_external_storage_s3_key"):
+		dfp_forget_cached_file(doc.name)
 	doc.dfp_external_storage_delete_file()
 
 
