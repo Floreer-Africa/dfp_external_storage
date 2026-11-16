@@ -984,6 +984,11 @@ class DFPExternalStorageFileRenderer:
 	def render(self):
 		file_id = self._regex[1]
 		file_name = self._regex[2] if len(self._regex.regs) == 3 else ""
+		# A 404 here is usually a failed fetch from remote storage, not a fact about
+		# the route. frappe stores rendered 404s in "website_404" and answers that url
+		# from it before any renderer runs, so one storage timeout kept a stylesheet or
+		# image 404ing until the next website-cache clear (Floreer-Africa/framework#301).
+		frappe.local.no_cache = 1
 		return file(name=file_id, file=file_name)
 
 
